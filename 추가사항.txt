@@ -1,0 +1,64 @@
+알콩약콩 추가사항 (의약품 제품 허가정보)
+
+작성: 2026-08-31
+
+
+1. .env에 넣은 것
+----------------
+MFDS_DRUG_PERMISSION_API_KEY
+  식약처 의약품 제품 허가정보 API 키
+  (공공데이터포털 일반 인증키. e약은요 키와 동일해도 됨)
+
+MFDS_DRUG_PERMISSION_BASE_URL
+  https://apis.data.go.kr/1471000/DrugPrdtPrmsnInfoService07
+
+MFDS_DRUG_PERMISSION_LIST_PATH
+  /getDrugPrdtPrmsnInq07   (목록)
+
+MFDS_DRUG_PERMISSION_DETAIL_PATH
+  /getDrugPrdtPrmsnDtlInq06  (상세: 효능·용법·주의)
+
+MFDS_DRUG_PERMISSION_DB_PATH
+  허가정보 전용 SQLite 파일 경로
+
+
+2. DB 위치
+----------
+기본 파일:
+  C:\Users\admin_25\Documents\GitHub\alkong_yakong\mfds_drug_permission.db
+
+기존 앱 DB(alkongyakong.db)와 별개다.
+약 이름 목록 약 4.3만 건을 여기 넣어 두었다.
+
+
+3. 앱에서 쓰는 순서
+------------------
+약 검색/설명:
+  1) mfds_drug_permission.db  (허가정보 API 복사본) ← 1순위
+  2) alkongyakong.db 로컬 medicines
+  3) e약은요 API
+
+자동완성:
+  1) 허가정보 DB → e약은요 → fallback
+  2) 오늘 약
+  3) 로컬 medicines
+  + 어르신 대충 입력 힌트 (열나→타이레놀, 깜빡→안 먹었을 때 등)
+  + 초성 입력 (ㅌㄹㄴ→타이레놀, ㅂㄹㅍ→부루펜)
+
+
+
+4. 다시 받을 때
+--------------
+목록 전체:
+  python sync_mfds_drug_permission.py --mode list
+
+상세(효능 등, 하루 호출 한도 있음):
+  python sync_mfds_drug_permission.py --mode detail --max-detail 2000
+
+
+5. 참고
+------
+건강기능식품(먹는 콜라겐) API는 약 DB가 아니라서 이번엔 안 넣음.
+이 DB 파일은 .gitignore에 넣어둠. 키는 .env만 보면 된다.
+
+끝.

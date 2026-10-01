@@ -22,13 +22,13 @@ class BiosignalNotifier extends Notifier<BiosignalState> {
     await polarService.requestPermissions();
 
     // 1. 심박수 스트림 구독
-    _hrSub = polarService.heartRateStream.listen((hr) {
+    _hrSub = polarService.heartRateStream(deviceId).listen((hr) {
       state = state.copyWith(currentHr: hr);
       _checkAnomalyThreshold(hr);
     });
 
     // 2. PPI 스트림 구독 및 RMSSD 계산 (30초 주기 가공)
-    _ppiSub = polarService.ppiStream.listen((ppi) {
+    _ppiSub = polarService.ppiStream(deviceId).listen((ppi) {
       if (ppi > 0) _ppiBuffer.add(ppi);
       if (_ppiBuffer.length >= 30) {
         final filtered = calculator.filterPpi(_ppiBuffer);
@@ -39,7 +39,8 @@ class BiosignalNotifier extends Notifier<BiosignalState> {
     });
 
     // 3. 가속도 스트림 구독 (변인 통제)
-    _accSub = polarService.accStream.listen((acc) {
+    _accSub = polarService.accStream(deviceId).listen((acc) {
+      if (acc.samples.isEmpty) return;
       // 단순 예시: 3축 벡터 변화량으로 움직임 임계치 판정
       final bool moving =
           (acc.samples.first.x.abs() > 500 || acc.samples.first.y.abs() > 500);

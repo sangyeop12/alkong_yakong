@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_config.dart';
 import '../../../../core/session/mvp_session.dart';
 import '../../../../core/widgets/rounded_gradient_app_bar.dart';
 
@@ -13,12 +14,13 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final _apiClient = ApiClient();
+  final _apiClient = ApiClient(baseUrl: ApiConfig.localFeatureBaseUrl);
 
   bool _isLoading = false;
   int? _submittingScheduleId;
   String? _errorMessage;
   Map<String, dynamic>? _dashboard;
+  final Set<String> _locallyTakenScheduleKeys = <String>{};
 
   // 캘린더를 위한 현재 선택된 날짜
   DateTime _selectedDate = DateTime.now();
@@ -43,13 +45,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _errorMessage = null;
     });
 
-    // 선택된 날짜 포맷팅 (YYYY-MM-DD 형식으로 API 요청 시 활용 가능)
-    // final dateStr = "${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}";
+    final dateStr =
+        '${_selectedDate.year}-${_selectedDate.month.toString().padLeft(2, '0')}-${_selectedDate.day.toString().padLeft(2, '0')}';
 
     try {
       final response = await _apiClient.get(
-        '/api/v1/users/${Uri.encodeComponent(userId)}/dashboard',
-        // queryParameters: {'date': dateStr}, // API가 특정 날짜 조회를 지원한다면 추가
+        '/api/v1/users/${Uri.encodeComponent(userId)}/dashboard?date=$dateStr',
       );
       if (!mounted) return;
       setState(() {
@@ -97,21 +98,61 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 처음 불러오는 동안에는 빈 화면 대신 그렇다고 말한다.
+    if (_isLoading && _dashboard == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final medication = _asMap(_dashboard?['medication_summary']);
     final todayMedications = _dashboard?['today_medications'];
     final summarySchedules = medication?['schedules'];
-    final schedules = todayMedications is List
+    final rawSchedules = todayMedications is List
         ? todayMedications
         : summarySchedules is List
         ? summarySchedules
         : const <dynamic>[];
+    final filteredSchedules = rawSchedules.where((schedule) {
+      final item = _asMap(schedule);
+      return item == null || !_isAspirinFallbackItem(item);
+    }).toList();
+    final sessionSchedules = _latestOcrSchedulesForDate(_selectedDate);
+    final schedules = filteredSchedules.isNotEmpty
+        ? filteredSchedules
+        : sessionSchedules;
     final risk = _asMap(_dashboard?['latest_risk']);
     final prescription = _asMap(_dashboard?['latest_prescription']);
     final event = _asMap(_dashboard?['latest_abnormal_event']);
-    final recentNotifications = _dashboard?['recent_notifications'] is List
-        ? _dashboard!['recent_notifications'] as List
-        : const <dynamic>[];
     final prescriptionMedicines = _stringList(prescription?['medicine_names']);
+    final visiblePrescriptionMedicines = prescriptionMedicines
+        .where((name) => !_isAspirinFallbackText(name))
+        .toList();
+    final visiblePrescription =
+        visiblePrescriptionMedicines.isEmpty && sessionSchedules.isEmpty
+        ? null
+        : prescription;
+    final displayedPrescriptionMedicines =
+        visiblePrescriptionMedicines.isNotEmpty
+        ? visiblePrescriptionMedicines
+        : sessionSchedules
+              .map((item) => _text(item['drug_name'], fallback: ''))
+              .where((name) => name.isNotEmpty)
+              .toList();
+    final hasDisplayedPrescription = displayedPrescriptionMedicines.isNotEmpty;
+    final displayedPrescriptionTitle = visiblePrescription == null
+        ? 'OCR 처방전'
+        : _text(visiblePrescription['display_name'], fallback: 'OCR 처방전');
+    final displayedPrescriptionRegisteredAt = visiblePrescription == null
+        ? MvpSession.latestOcrRegisteredAt?.toString() ?? '방금 등록'
+        : _text(
+            visiblePrescription['registered_at'] ??
+                visiblePrescription['created_at'],
+            fallback: MvpSession.latestOcrRegisteredAt?.toString() ?? '방금 등록',
+          );
+    final displayedCompleted = schedules.where((schedule) {
+      final item = _asMap(schedule);
+      if (item == null) return false;
+      return _locallyTakenScheduleKeys.contains(_scheduleKey(item)) ||
+          _text(item['status'], fallback: 'PENDING').toUpperCase() == 'TAKEN';
+    }).length;
 
     return Scaffold(
       backgroundColor: kBackground,
@@ -159,8 +200,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     _DashboardCard(
                       title: '이날의 복약',
                       value:
-                          '${_text(medication?['completed'], fallback: '0')} / '
-                          '${_text(medication?['total'], fallback: '0')} 완료',
+                          '$displayedCompleted / '
+                          '${schedules.length} 완료',
                       icon: Icons.medication_outlined,
                       color: kPrimary,
                     ),
@@ -171,6 +212,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ...schedules.map((schedule) {
                         final item =
                             _asMap(schedule) ?? const <String, dynamic>{};
+                        final scheduleId = _intValue(
+                          item['schedule_id'] ?? item['id'],
+                        );
+                        final scheduleKey = _scheduleKey(item);
+                        final effectiveStatus =
+                            _locallyTakenScheduleKeys.contains(scheduleKey)
+                            ? 'TAKEN'
+                            : _text(item['status'], fallback: 'PENDING');
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: _MedicationCard(
@@ -179,11 +228,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               item['drug_name'] ?? item['product_name'],
                             ),
                             ingredient: _text(item['ingredient']),
-                            status: _text(item['status'], fallback: 'PENDING'),
+                            status: effectiveStatus,
                             isSubmitting:
-                                _submittingScheduleId ==
-                                _intValue(item['schedule_id'] ?? item['id']),
-                            onTaken: () => _markTaken(item),
+                                scheduleId != null &&
+                                _submittingScheduleId == scheduleId,
+                            onTaken: scheduleId == null
+                                ? () {
+                                    setState(() {
+                                      _locallyTakenScheduleKeys.add(
+                                        scheduleKey,
+                                      );
+                                    });
+                                  }
+                                : () => _markTaken(item),
                           ),
                         );
                       }),
@@ -203,13 +260,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     const SizedBox(height: 10),
                     _DashboardCard(
                       title: '최근 처방전',
-                      value: prescription == null
+                      value: !hasDisplayedPrescription
                           ? '데이터 없음'
-                          : '${_text(prescription['display_name'], fallback: 'OCR 처방전')}\n'
-                                '등록일: ${_text(prescription['registered_at'] ?? prescription['created_at'])}\n'
-                                '약: ${prescriptionMedicines.isEmpty ? '데이터 없음' : prescriptionMedicines.take(3).join(', ')}',
+                          : '$displayedPrescriptionTitle\n'
+                                '등록일: $displayedPrescriptionRegisteredAt\n'
+                                '약: ${displayedPrescriptionMedicines.take(3).join(', ')}',
                       icon: Icons.description_outlined,
-                      color: const Color(0xFF4A78C2),
+                      color: AppColors.legacyBlue,
                     ),
                     const SizedBox(height: 10),
                     _DashboardCard(
@@ -295,27 +352,32 @@ class _WeeklyCalendar extends StatelessWidget {
                       ]
                     : null,
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    dayName,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: isSelected ? Colors.white : Colors.grey[500],
+              // 칸 높이가 정해져 있어 글자를 키우면 아래로 넘친다.
+              // 칸 안에서 요일·날짜를 함께 줄인다.
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      dayName,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: isSelected ? Colors.white : Colors.grey[500],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${date.day}',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: isSelected ? Colors.white : kText,
+                    const SizedBox(height: 8),
+                    Text(
+                      '${date.day}',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                        color: isSelected ? Colors.white : kText,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           );
@@ -461,7 +523,7 @@ class _MedicationCard extends StatelessWidget {
               alignment: Alignment.centerRight,
               child: FilledButton.tonal(
                 onPressed: isSubmitting ? null : onTaken,
-                child: Text(isSubmitting ? '처리 중...' : '복약 완료'),
+                child: Text(isSubmitting ? '처리 중...' : '약 먹었어요'),
               ),
             ),
           ],
@@ -483,6 +545,11 @@ class _MedicationStatus extends StatelessWidget {
       'MISSED' => Colors.red,
       _ => Colors.orange,
     };
+    final label = switch (status) {
+      'TAKEN' => '복약 완료',
+      'MISSED' => '복약 놓침',
+      _ => '복약 전',
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
@@ -490,7 +557,7 @@ class _MedicationStatus extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        status,
+        label,
         style: TextStyle(
           color: color,
           fontSize: 12,
@@ -513,6 +580,38 @@ List<String> _stringList(dynamic value) {
       .toList();
 }
 
+List<Map<String, dynamic>> _latestOcrSchedulesForDate(DateTime selectedDate) {
+  final registeredAt = MvpSession.latestOcrRegisteredAt;
+  final items = MvpSession.latestOcrItems;
+  if (registeredAt == null || items.isEmpty) return const [];
+  if (registeredAt.year != selectedDate.year ||
+      registeredAt.month != selectedDate.month ||
+      registeredAt.day != selectedDate.day) {
+    return const [];
+  }
+
+  final schedules = <Map<String, dynamic>>[];
+  for (final item in items) {
+    final frequency = _intValue(item['frequency_per_day']) ?? 1;
+    final times = switch (frequency.clamp(1, 3)) {
+      1 => ['08:00'],
+      2 => ['08:00', '20:00'],
+      _ => ['08:00', '13:00', '20:00'],
+    };
+    for (final time in times) {
+      schedules.add({
+        'time': time,
+        'scheduled_time': time,
+        'drug_name': item['drug_name'],
+        'product_name': item['drug_name'],
+        'ingredient': item['easy_explanation'] ?? '',
+        'status': 'PENDING',
+      });
+    }
+  }
+  return schedules;
+}
+
 String _text(dynamic value, {String fallback = '데이터 없음'}) {
   final text = value?.toString().trim();
   return text == null || text.isEmpty ? fallback : text;
@@ -520,6 +619,31 @@ String _text(dynamic value, {String fallback = '데이터 없음'}) {
 
 int? _intValue(dynamic value) {
   return value is int ? value : int.tryParse(value?.toString() ?? '');
+}
+
+String _scheduleKey(Map<String, dynamic> item) {
+  final id = _intValue(item['schedule_id'] ?? item['id']);
+  if (id != null) return 'id:$id';
+
+  final time = _text(item['time'] ?? item['scheduled_time'], fallback: '');
+  final drugName = _text(
+    item['drug_name'] ?? item['product_name'],
+    fallback: '',
+  );
+  final ingredient = _text(item['ingredient'], fallback: '');
+  return 'local:$time|$drugName|$ingredient';
+}
+
+bool _isAspirinFallbackItem(Map<String, dynamic> item) {
+  return _isAspirinFallbackText(item['drug_name']) ||
+      _isAspirinFallbackText(item['product_name']) ||
+      _isAspirinFallbackText(item['ingredient']) ||
+      _isAspirinFallbackText(item['medicine_name']);
+}
+
+bool _isAspirinFallbackText(dynamic value) {
+  final compact = value?.toString().replaceAll(' ', '').toLowerCase() ?? '';
+  return compact.contains('아스피린') || compact.contains('aspirin');
 }
 
 String _apiError(ApiException error) {

@@ -1,200 +1,274 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+
 import '../../../../core/constants/app_colors.dart';
-import '../../../../core/session/auth_session.dart';
-import '../../../dashboard/presentation/screens/home_screen.dart';
+import '../../../../core/network/api_client.dart';
+import '../../../../core/theme/app_typography.dart';
+import '../../../../core/widgets/app_logo.dart';
+import '../../../../core/widgets/senior_button.dart';
+import '../../../../core/widgets/senior_feedback.dart';
+import '../../../profile/application/current_user_controller.dart';
+import '../../../profile/application/session_actions.dart';
 import 'signup_screen.dart';
 
-/// 로그인 화면 — 휴대폰번호 + 비밀번호 (소셜로그인 없음).
-/// 위치: lib/features/auth/presentation/screens/login_screen.dart
-class LoginScreen extends StatefulWidget {
+/// 4i — 로그인 · 시작하기.
+///
+/// 프로토타입대로 전화번호·비밀번호·시작하기만 둔다.
+/// 가족이 대신 만들어 드리는 길은 가입 화면 안에서 잇는다.
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _phone = TextEditingController();
-  final _pw = TextEditingController();
+  final _password = TextEditingController();
   bool _obscure = true;
+  bool _loggingIn = false;
 
   @override
   void dispose() {
     _phone.dispose();
-    _pw.dispose();
+    _password.dispose();
     super.dispose();
   }
 
-  void _toast(String m) => ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(m), behavior: SnackBarBehavior.floating),
-  );
-
-  void _login() async {
-    if (_phone.text.trim().isEmpty || _pw.text.isEmpty) {
-      _toast('휴대폰번호와 비밀번호를 입력해주세요');
+  Future<void> _login() async {
+    if (_phone.text.trim().isEmpty || _password.text.isEmpty) {
+      showSeniorSnackbar(context, '전화번호와 비밀번호를 넣어주세요', error: true);
       return;
     }
-    // 백엔드 연결 전 임시 세션 발급 처리 (이 부분이 없어서 라우터가 튕김)
-    await AuthSession.setLoggedIn('patient');
-    
-    if (mounted) {
-      context.go('/');
+    if (_loggingIn) return;
+
+    setState(() => _loggingIn = true);
+    try {
+      final user = await ref
+          .read(userRepositoryProvider)
+          .login(phone: _phone.text.trim(), password: _password.text);
+      if (!mounted) return;
+      await startSession(ref, user);
+      if (mounted) context.go('/');
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      showSeniorSnackbar(context, error.message, error: true);
+    } finally {
+      if (mounted) setState(() => _loggingIn = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBackground,
+      backgroundColor: AppColors.surface,
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 56),
-              Center(
-                child: Column(
-                  children: [
-                    Container(
-                      width: 76,
-                      height: 76,
-                      decoration: BoxDecoration(
-                        color: kPrimary,
-                        borderRadius: BorderRadius.circular(24),
-                      ),
-                      child: const Center(
-                        child: Text('💊', style: TextStyle(fontSize: 40)),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text(
-                      '알콩약콩',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w800,
-                        color: kText,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '안전한 복약을 도와드려요',
-                      style: TextStyle(fontSize: 15, color: Colors.grey[500]),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 56),
-              _label('휴대폰번호'),
-              _field(
-                _phone,
-                hint: '010-0000-0000',
-                keyboard: TextInputType.phone,
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: AppLogo(size: 72),
               ),
               const SizedBox(height: 18),
-              _label('비밀번호'),
-              _field(
-                _pw,
-                hint: '비밀번호 입력',
+              Text('알콩약콩', style: AppText.screenTitle(size: 36)),
+              const SizedBox(height: 8),
+              Text(
+                '약 드실 시간을 알려드리고,\n가족이 함께 챙겨드려요.',
+                style: AppText.body(size: 21, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 34),
+
+              _FieldLabel('전화번호'),
+              _SeniorField(
+                controller: _phone,
+                hint: '010-0000-0000',
+                keyboardType: TextInputType.phone,
+                // 숫자 키패드 강제 + 자동 하이픈.
+                inputFormatters: [PhoneNumberFormatter()],
+              ),
+              const SizedBox(height: 20),
+
+              _FieldLabel('비밀번호'),
+              _SeniorField(
+                controller: _password,
+                hint: '비밀번호',
                 obscure: _obscure,
-                suffix: IconButton(
-                  icon: Icon(
-                    _obscure ? Icons.visibility_off : Icons.visibility,
-                    color: Colors.grey,
-                  ),
+                // 아이콘 대신 한글 라벨 — 눈 모양 아이콘은 학습이 안 된다.
+                suffix: SeniorTextButton(
+                  label: _obscure ? '보기' : '숨기기',
+                  color: AppColors.point,
+                  // 가로를 채우지 않고 글자 폭만 차지해야 오른쪽에 붙는다.
+                  expand: false,
                   onPressed: () => setState(() => _obscure = !_obscure),
                 ),
               ),
-              const SizedBox(height: 28),
-              SizedBox(
-                height: 56,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: kPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  onPressed: _login,
-                  child: const Text(
-                    '로그인',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                  ),
-                ),
+              const SizedBox(height: 26),
+
+              SeniorButton(
+                label: _loggingIn ? '들어가는 중...' : '시작하기',
+                minHeight: 74,
+                fontSize: 25,
+                onPressed: _loggingIn ? null : _login,
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 18),
+
               Center(
-                child: GestureDetector(
+                child: InkWell(
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const SignupScreen()),
+                    MaterialPageRoute<void>(
+                      builder: (_) => const SignupScreen(),
+                    ),
                   ),
-                  child: Text.rich(
-                    TextSpan(
-                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-                      children: const [
-                        TextSpan(text: '아직 회원이 아니신가요?   '),
-                        TextSpan(
-                          text: '회원가입',
-                          style: TextStyle(
-                            color: kPrimary,
-                            fontWeight: FontWeight.w700,
-                          ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 14,
+                    ),
+                    child: Text.rich(
+                      TextSpan(
+                        style: AppText.label(
+                          size: 19,
+                          color: AppColors.textSecondary,
                         ),
-                      ],
+                        children: [
+                          const TextSpan(text: '처음이세요?  '),
+                          TextSpan(
+                            text: '가입하기',
+                            style: AppText.label(
+                              size: 19,
+                              color: AppColors.point,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
+              const SizedBox(height: 30),
+
+              // 화면 확인용 임시 단추. 개발 빌드에서만 보인다.
+              // 확인이 끝나면 이 블록과 /demo-guardian, demo_guardian.dart 를 지운다.
+              if (kDebugMode) ...[
+                const SizedBox(height: 18),
+                SeniorButton(
+                  label: '화면 확인용 · 보호자 화면',
+                  kind: SeniorButtonKind.neutral,
+                  minHeight: 56,
+                  fontSize: 18,
+                  onPressed: () => context.push('/demo-guardian'),
+                ),
+              ],
             ],
           ),
         ),
       ),
     );
   }
+}
 
-  Widget _label(String t) => Padding(
-    padding: const EdgeInsets.only(bottom: 8, left: 4),
-    child: Text(
-      t,
-      style: const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w700,
-        color: kText,
-      ),
-    ),
+class _FieldLabel extends StatelessWidget {
+  final String text;
+  const _FieldLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Text(text, style: AppText.label()),
   );
+}
 
-  Widget _field(
-    TextEditingController c, {
-    String? hint,
-    bool obscure = false,
-    TextInputType? keyboard,
-    Widget? suffix,
-  }) {
-    return TextField(
-      controller: c,
-      obscureText: obscure,
-      keyboardType: keyboard,
-      style: const TextStyle(fontSize: 16),
-      decoration: InputDecoration(
-        hintText: hint,
-        filled: true,
-        fillColor: Colors.white,
-        suffixIcon: suffix,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 16,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: Colors.grey[300]!),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: kPrimary, width: 1.5),
-        ),
+/// 높이 66, bg 배경, 2px 테두리, 값 22px/700.
+class _SeniorField extends StatelessWidget {
+  final TextEditingController controller;
+  final String hint;
+  final bool obscure;
+  final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
+  final Widget? suffix;
+
+  const _SeniorField({
+    required this.controller,
+    required this.hint,
+    this.obscure = false,
+    this.keyboardType,
+    this.inputFormatters,
+    this.suffix,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 66),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppColors.border, width: 2),
       ),
+      // "보기" 같은 우측 버튼이 붙으면 오른쪽 여백을 줄여 버튼을 테두리 쪽으로
+      // 붙인다. 버튼 자체의 탭 영역은 그대로 48px를 넘긴다.
+      padding: EdgeInsets.only(left: 20, right: suffix == null ? 20 : 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: controller,
+              obscureText: obscure,
+              keyboardType: keyboardType,
+              inputFormatters: inputFormatters,
+              style: AppText.label(size: 22, color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                hintText: hint,
+                hintStyle: AppText.label(
+                  size: 22,
+                  color: AppColors.textTertiary,
+                ),
+              ),
+            ),
+          ),
+          if (suffix != null)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 92),
+              child: suffix!,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 전화번호 입력에 자동으로 하이픈을 넣는다. 어르신이 직접 `-`를 찾지 않도록.
+class PhoneNumberFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'[^0-9]'), '');
+    final capped = digits.length > 11 ? digits.substring(0, 11) : digits;
+
+    final buffer = StringBuffer();
+    for (int i = 0; i < capped.length; i++) {
+      if (i == 3 ||
+          (i == 7 && capped.length > 10) ||
+          (i == 6 && capped.length <= 10)) {
+        buffer.write('-');
+      }
+      buffer.write(capped[i]);
+    }
+    final text = buffer.toString();
+
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
     );
   }
 }

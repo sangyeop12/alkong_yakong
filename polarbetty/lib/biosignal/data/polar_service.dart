@@ -49,4 +49,14 @@ class PolarService {
           .where((bpm) => bpm > 0);
     });
   }
+
+  Stream<int> ppiStream(String deviceId) {
+    return polar.startPpiStreaming(deviceId.trim()).expand((data) {
+      return data.samples.map((sample) => sample.ppi);
+    });
+  }
+
+  Stream<PolarAccData> accStream(String deviceId) {
+    return polar.startAccStreaming(deviceId.trim());
+  }
 }

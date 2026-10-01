@@ -1,0 +1,93 @@
+{
+  "MFDS_DRUG_PERMISSION_API_KEY_present": true,
+  "E_DRUG_API_KEY_present": true,
+  "permission": [
+    {
+      "query": "프리마란정",
+      "ok": true,
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE.",
+      "totalCount": 1,
+      "first": [
+        {
+          "ITEM_NAME": "프리마란정(메퀴타진)",
+          "ITEM_SEQ": "197800308"
+        }
+      ]
+    },
+    {
+      "query": "프레벨액0.25%",
+      "ok": true,
+      "resultCode": "01",
+      "resultMsg": "System Error!!",
+      "totalCount": null,
+      "first": []
+    },
+    {
+      "query": "프레벨액",
+      "ok": true,
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE.",
+      "totalCount": 1,
+      "first": [
+        {
+          "ITEM_NAME": "프레벨액0.25%(프레드니카르베이트)",
+          "ITEM_SEQ": "200401147"
+        }
+      ]
+    },
+    {
+      "query": "프리마라정",
+      "ok": true,
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE.",
+      "totalCount": 0,
+      "first": []
+    },
+    {
+      "query": "프레베넥액",
+      "ok": true,
+      "resultCode": "00",
+      "resultMsg": "NORMAL SERVICE.",
+      "totalCount": 0,
+      "first": []
+    }
+  ],
+  "e_drug": [
+    {
+      "query": "프리마란정",
+      "ok": true,
+      "count": 0,
+      "match_type": null,
+      "first_names": []
+    },
+    {
+      "query": "프레벨액0.25%",
+      "ok": true,
+      "count": 0,
+      "match_type": null,
+      "first_names": []
+    },
+    {
+      "query": "프레벨액",
+      "ok": true,
+      "count": 0,
+      "match_type": null,
+      "first_names": []
+    },
+    {
+      "query": "프리마라정",
+      "ok": true,
+      "count": 0,
+      "match_type": null,
+      "first_names": []
+    },
+    {
+      "query": "프레베넥액",
+      "ok": true,
+      "count": 0,
+      "match_type": null,
+      "first_names": []
+    }
+  ]
+}

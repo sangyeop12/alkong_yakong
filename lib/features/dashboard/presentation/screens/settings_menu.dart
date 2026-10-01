@@ -1,78 +1,42 @@
 import 'package:flutter/material.dart';
-import '../../../../core/constants/app_colors.dart';
 
-/// 내 정보 탭 공용 설정·지원 메뉴.
-/// 환자·보호자 양쪽에서 사용. accent 로 아이콘 색만 구분.
-/// 각 항목은 아직 화면이 없어서 누르면 "준비 중" 안내를 띄운다(// TODO).
-/// 위치: lib/features/dashboard/presentation/screens/settings_menu.dart
+import '../../../../core/widgets/senior_card.dart';
+import '../../../../core/widgets/senior_header.dart';
+import '../../../profile/presentation/screens/help_screen.dart';
+import '../../../profile/presentation/screens/notices_screen.dart';
+import '../../../profile/presentation/screens/policy_screen.dart';
+
+/// 내 정보 탭의 도움말·약관 목록.
+///
+/// 아이콘 단독 사용을 금지했으므로 아이콘을 걷어내고 한글 라벨만 남겼다.
+/// 행 높이는 상하 패딩 17px로 최소 56px를 넘긴다.
 class SettingsMenu extends StatelessWidget {
-  final Color accent;
-  const SettingsMenu({super.key, this.accent = kPrimary});
-
-  void _todo(BuildContext context, String name) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$name — 준비 중이에요'),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
+  const SettingsMenu({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: kCard,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
+    final items = <(String, WidgetBuilder)>[
+      ('도움이 필요할 때', (_) => const HelpScreen()),
+      ('알려드릴 소식', (_) => const NoticesScreen()),
+      ('이용약관', (_) => const PolicyScreen.terms()),
+      ('개인정보처리방침', (_) => const PolicyScreen.privacy()),
+    ];
+
+    return SeniorCard(
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 4),
       child: Column(
         children: [
-          _row(context, Icons.campaign_outlined, '공지사항'),
-          _divider(),
-          _row(context, Icons.headset_mic_outlined, '고객센터 · 문의하기'),
-          _divider(),
-          _row(context, Icons.notifications_none_rounded, '알림 설정'),
-          _divider(),
-          _row(context, Icons.description_outlined, '이용약관'),
-          _divider(),
-          _row(context, Icons.privacy_tip_outlined, '개인정보처리방침'),
-        ],
-      ),
-    );
-  }
-
-  Widget _divider() =>
-      Divider(height: 1, indent: 52, endIndent: 16, color: Colors.grey[200]);
-
-  Widget _row(BuildContext context, IconData icon, String label) {
-    return InkWell(
-      onTap: () => _todo(context, label),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        child: Row(
-          children: [
-            Icon(icon, size: 21, color: accent),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(fontSize: 14.5, color: kText),
-              ),
-            ),
-            Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 14,
-              color: Colors.grey[300],
+          for (int i = 0; i < items.length; i++) ...[
+            if (i > 0) const SeniorDivider(),
+            SeniorListRow(
+              label: items[i].$1,
+              trailing: const SeniorChevron(),
+              onTap: () => Navigator.of(
+                context,
+              ).push(MaterialPageRoute<void>(builder: items[i].$2)),
             ),
           ],
-        ),
+        ],
       ),
     );
   }

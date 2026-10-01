@@ -1,0 +1,263 @@
+================================================================================
+AI 약사·복약상담 실제 구조 플로우 (단순 벤다이어그램이 아님)
+프로젝트: 알콩약콩
+작성일: 2026-09-01
+형식: OCR 상세 플로우와 동일 (IN / CALL / WRITE / OUT)
+================================================================================
+
+개념 요약만 하면:
+  질문·자동완성 → 약이름 확정·공식검색 → 쉬운 답
+
+설계 문서 본체는 반드시:
+  1) 앱이 무엇을 보내는가 (IN)
+  2) 서버가 무엇을 불러오는가 (CALL)
+  3) DB에 무엇을 읽고/쓰는가 (READ/WRITE)
+  4) 앱이 무엇을 받아 어디에 보여주는가 (OUT)
+
+
+--------------------------------------------------------------------------------
+0. Mermaid (상세판)
+--------------------------------------------------------------------------------
+
+flowchart TB
+    subgraph APP_IN["📱 앱 IN — 약 설명/채팅 화면"]
+        U1["입력창에 글자 타이핑\n또는 초성"]
+        U2["GET suggestions\nq, user_id"]
+        U3["후보 칩 터치\n또는 질문 전송"]
+        U4["POST /api/v1/drug-explain/chat\nuser_id, message"]
+        U1 --> U2
+        U2 --> U3
+        U3 --> U4
+    end
+
+    subgraph API["🌐 FastAPI routes/drug_explain.py"]
+        R1["chat_suggestions()"]
+        R2["chat_with_pharmacist()"]
+        R2 --> LEX["lexicon 구성\nsuggestions 결과 약이름 목록"]
+    end
+
+    subgraph PIPE["⚙️ pharmacist/chat_pipeline.run_chat_pipeline"]
+        S1["stage spell\n약이름 후보만 추출"]
+        S2["stage match\nname_matcher\n≥0.90 확정 / 0.75~0.90 후보칩"]
+        S3["stage retrieve\nretrieve_official"]
+        S4["stage fixed\nFAQ면 DB필드 고정답"]
+        S5["stage generate\nGemini 쉬운말\n(source_text만 근거)"]
+        S6["stage guard\n근거 없는 문장 삭제"]
+        S7["stage excerpt/fail\n원문 발췌 또는 안전 안내"]
+        S1 --> S2 --> S3 --> S4
+        S4 -->|고정답 없음| S5 --> S6
+        S6 -->|실패| S7
+        S4 -->|고정답 있음| DONE["stage done"]
+        S6 -->|통과| DONE
+    end
+
+    subgraph CALLS["🔌 CALL — 불러오는 것"]
+        C1["mfds_drug_permission.db\n제품명 검색"]
+        C2["alkongyakong.db\nmedicines / user_medicines"]
+        C3["easy_category_map.db\nchat_links / category_map"]
+        C4["e약은요 API optional"]
+        C5["Gemini generate_from_source"]
+        C6["guard_reply 문자열 검사"]
+    end
+
+    subgraph APP_OUT["📱 앱 OUT"]
+        O1["reply 문장 말풍선"]
+        O2["candidates[] 있으면\n'혹시 이 약인가요?' 칩"]
+        O3["ok=false 안내 문구"]
+        O4["표시명에 쉬운괄호\n예: 약이름 (열나약)"]
+    end
+
+    U2 --> R1
+    R1 --> C1
+    R1 --> C2
+    R1 --> C3
+    U4 --> R2 --> LEX --> S1
+    S2 --> C1
+    S3 --> C1
+    S3 --> C2
+    S3 --> C4
+    S5 --> C5
+    S6 --> C6
+    DONE --> RESP["JSON: ok, reply, candidates?, trace"]
+    S2 -->|애매| RESP
+    S7 --> RESP
+    RESP --> O1
+    RESP --> O2
+    RESP --> O3
+
+    CORE["★ 공통으로 흐르는 값\n교정된 공식 약이름 + source_text 근거"]
+    CORE -.-> S3
+    CORE -.-> S4
+    CORE -.-> S5
+    CORE -.-> O1
+
+
+--------------------------------------------------------------------------------
+1. 앱이 보내는 것 (IN)
+--------------------------------------------------------------------------------
+
+화면: lib/features/drug_explain/... (약 설명·채팅)
+
+(1) 자동완성
+    GET /api/v1/drug-explain/suggestions
+    쿼리:
+      q         입력 글자 / 초성 / 빈값(초기 FAQ·오늘약)
+      user_id   오늘 먹는 약 후보용
+
+(2) 채팅 질문
+    POST /api/v1/drug-explain/chat
+    body:
+      user_id   사용자
+      message   예: "타이레놀 뭐에 좋아?"
+                 "타일레놀" (오타)
+                 "아스피린 부작용"
+
+(3) (선택) 약 카드 설명
+    GET /api/v1/drug-explain/{medicine_code}
+
+
+--------------------------------------------------------------------------------
+2. 서버가 불러오는 것 (CALL)
+--------------------------------------------------------------------------------
+
+순서/상황        모듈                         불러오는 것
+--------------  ---------------------------  --------------------------------
+suggestions     pharmacist/suggestions.py    허가DB 이름검색
+                                             medicines / today medicines
+                                             easy_category_map chat_links
+                                             e약은요(캐시)
+                                             초성 변환 chosung
+
+chat lexicon    drug_explain.py              suggestions 두 번 호출 결과로
+                                             약이름 사전(lexicon) 구성
+
+spell           pharmacist/spell.py          문장 토큰·lexicon 부분일치
+                                             ※ 없는 약 발명 금지
+
+match           matching/name_matcher.py     exact→정규화→제형제거→fuzzy
+                                             AUTO_ACCEPT 0.90
+                                             CANDIDATE_MIN 0.75
+
+enrich lexicon  chat_pipeline._enrich_lexicon
+                                             search_permission_names
+                                             (오타 보정용 허가명 보강)
+                                             ※ 사용자 원문 토큰은 사전에 안 넣음
+
+retrieve        pharmacist/retrieve.py       1) mfds_drug_permission.db
+                                             2) alkongyakong medicines
+                                             3) e약은요 API
+
+fixed reply     _fixed_db_reply              medicine.efficacy / usage /
+                                             precautions 필드만 사용
+
+generate        pharmacist/generate.py       Gemini + source_text만
+                                             validate_easy_output 길이제한
+
+guard           pharmacist/guard.py          source overlap · 숫자 검증
+
+easy label      easy_category*.py            easy_category_map.db
+
+
+--------------------------------------------------------------------------------
+3. DB READ / WRITE
+--------------------------------------------------------------------------------
+
+■ READ (상담 시 주로 읽기)
+
+  mfds_drug_permission.db
+    - 제품명 검색 (search_permission_names / find_permission_product)
+    - 상세 미러 (detail_synced 등)
+
+  alkongyakong.db
+    - SELECT … FROM medicines WHERE product_name …
+    - 오늘약/등록약: user_medicines (+ schedules) 기반 suggestions
+
+  easy_category_map.db
+    - SELECT trigger, link_type, link_value FROM chat_links …
+    - SELECT official_phrase, easy_label … FROM category_map …
+
+■ WRITE (현재)
+
+  - 채팅 질의·응답 이력 테이블 저장은 아직 로드맵(미구현)
+  - 상담 자체는 읽기 중심. OCR 등록 약이 lexicon/오늘약으로 읽혀 들어옴
+
+  → 문서에 "WRITE 없음"을 숨기지 말 것. 지금은 READ + 외부 API + LLM.
+
+
+--------------------------------------------------------------------------------
+4. 앱이 받는 것 / 어디로 보여주는가 (OUT)
+--------------------------------------------------------------------------------
+
+suggestions 응답
+  { items: [ { label, type: medicine|faq|phrase|… }, … ] }
+  → 입력창 아래 자동완성 칩
+
+chat 응답
+  {
+    ok: bool,
+    reply: string,           // 말풍선
+    candidates?: [           // 0.75~0.90 애매할 때
+      { label, score }, …
+    ],
+    trace: {                 // 내부/디버그 (화면 기본 비노출)
+      original, corrected, source, stage, …
+    }
+  }
+
+앱 화면 분기
+  candidates 있음 → "혹시 이 약인가요?" 선택 UI
+  ok=true         → reply 표시
+  ok=false        → 못 찾음 / 자료 부족 안내
+  선택 후 재전송  → 확정 약이름으로 다시 chat
+
+
+--------------------------------------------------------------------------------
+5. ★ 공통으로 끝까지 흐르는 값
+--------------------------------------------------------------------------------
+
+  교정·확정된 공식 약이름 (corrected / product_name)
+  + official.source_text (효능·용법·주의 근거)
+
+  흐름:
+    앱 message/칩
+      → spell/match로 이름 확정
+      → retrieve로 source 확보
+      → fixed 또는 generate+guard
+      → 앱 reply
+
+
+--------------------------------------------------------------------------------
+6. 단계별 입·출력을 글로 풀면
+--------------------------------------------------------------------------------
+
+  (1) IN   어르신이 "타일레놀" 입력 또는 칩 터치
+  (2) CALL suggestions / 허가DB / 오늘약 → 후보 목록
+  (3) IN   "타이레놀 뭐에 좋아?" POST chat
+  (4) CALL spell→match→retrieve
+  (5) CALL fixed DB답 또는 Gemini(근거만)→guard
+  (6) OUT  짧은 쉬운 reply / 또는 후보칩 / 또는 안전 안내
+
+
+--------------------------------------------------------------------------------
+7. 로드맵에서 WRITE가 붙을 자리
+--------------------------------------------------------------------------------
+
+  [단기] chat_logs INSERT (user_id, message, reply, corrected, source, stage)
+  [단기] OCR 직후 약 → 채팅 프리필
+  [중기] DUR 결과 문장과 chat reply 연결
+
+
+--------------------------------------------------------------------------------
+8. 사용자에게 이 구조가 주는 것
+--------------------------------------------------------------------------------
+
+  물어보면(IN)
+  공식 자료를 찾아(CALL/READ)
+  쉽게 답하고(OUT)
+  애매하면 고르게 한다(candidates).
+
+  목적: 손·오타가 서툴어도, 거짓 정보 없이 복약 상담.
+
+================================================================================
+끝 — AI 약사 입출력 상세
+================================================================================

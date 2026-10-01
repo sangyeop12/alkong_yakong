@@ -46,9 +46,16 @@ app.*.map.json
 /android/app/release
 
 alkongyakong.db
+mfds_drug_permission.db
+mfds_drug_permission.db-*
+easy_category_map.db
+easy_category_map.db-*
 __pycache__/
-.env
-all_code.txt
+# Widget Preview related
+.widget_preview/
 all_code.txt
 all_code2.txt
-.env
+
+# Flutter가 빌드할 때마다 새로 만드는 임시 폴더.
+# 커밋해 두면 윈도우에서 링크를 못 만들어 flutter run이 그대로 멈춘다.
+**/flutter/ephemeral/

@@ -253,7 +253,7 @@ class _InfoCard extends StatelessWidget {
     return const _DataCard(
       title: '수동 심박 테스트',
       lines: ['Polar BLE 대신 BPM을 직접 입력해 저장 및 이상 이벤트 생성을 검증합니다.'],
-      color: Color(0xFF534AB7),
+      color: AppColors.legacyViolet,
     );
   }
 }

@@ -8,7 +8,7 @@ from app.database import get_connection
 from app.services.dur_service import analyze_dur
 from app.services.drug_explain_service import get_drug_explanation
 from app.models.schemas import DurAnalyzeRequest
-import app.services.gemini_service as gemini_service
+import app.services.drug_explain_service as drug_explain_service
 
 def setup_dur_dummy_data():
     conn = get_connection()
@@ -70,7 +70,7 @@ def test_ai_explanation():
     print("\n=== [2. AI 쉬운 의약품 설명 모듈 (e약은요 + Gemini) 연동 확인] ===")
     
     # 젬미니 호출 부분을 모의(Mock)로 대체해서 동작만 확인
-    gemini_service.generate_easy_explanation = dummy_generate_easy_explanation
+    drug_explain_service.generate_card_from_source = dummy_generate_easy_explanation
     
     conn = get_connection()
     med = conn.execute("SELECT medicine_code, product_name FROM medicines LIMIT 1").fetchone()

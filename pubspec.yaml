@@ -43,6 +43,12 @@ dependencies:
   http: ^1.2.2
   shared_preferences: ^2.5.5
   fl_chart: ^1.2.0
+  # 화면 아이콘. 로고와 같은 둥근 선 조형이라 함께 놓아도 따로 놀지 않는다.
+  flutter_tabler_icons: ^1.43.0
+  flutter_local_notifications: ^22.3.1
+  timezone: ^0.11.1
+  flutter_timezone: ^5.1.0
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
@@ -54,6 +60,23 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  # 앱 아이콘 생성기. assets/icon/app_icon.png 하나로
+  # 안드로이드·iOS·웹 아이콘을 전부 만들어 준다.
+  #   dart run flutter_launcher_icons
+  flutter_launcher_icons: ^0.14.4
+
+# 앱 아이콘 원본은 1024×1024 정사각 PNG 한 장이다.
+# 파일을 assets/icon/app_icon.png 로 넣고 위 명령을 돌리면
+# 각 플랫폼의 아이콘이 갱신된다.
+flutter_launcher_icons:
+  image_path: assets/icon/app_icon.png
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  web:
+    generate: true
+    background_color: "#1F42E5"
+    theme_color: "#1F42E5"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -66,10 +89,30 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  # 시니어 리디자인의 타이포는 Noto Sans KR의 400/500/700/900에 기대고 있다.
+  # 폰트를 번들하지 않으면 900이 없는 기기(iOS 기본 한글 폰트 등)에서
+  # 제목의 위계가 약해진다. 아래 네 파일을 assets/fonts/에 받아 두고
+  # 이 블록의 주석을 풀면 디자인 그대로 렌더된다.
+  #   https://fonts.google.com/noto/specimen/Noto+Sans+KR (400/500/700/900 TTF)
+  # 주석 상태에서는 lib/core/theme/app_typography.dart의
+  # fontFamilyFallback이 기기에 깔린 Noto Sans (CJK) KR을 찾아 쓴다.
+  #
+  # fonts:
+  #   - family: Noto Sans KR
+  #     fonts:
+  #       - asset: assets/fonts/NotoSansKR-400.ttf
+  #         weight: 400
+  #       - asset: assets/fonts/NotoSansKR-500.ttf
+  #         weight: 500
+  #       - asset: assets/fonts/NotoSansKR-700.ttf
+  #         weight: 700
+  #       - asset: assets/fonts/NotoSansKR-900.ttf
+  #         weight: 900
+
+  # 앱 아이콘 원본. 런처 아이콘뿐 아니라 로그인·잠금화면 알림의
+  # 로고 자리에도 같은 파일을 쓴다.
+  assets:
+    - assets/icon/app_icon.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

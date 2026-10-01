@@ -1,0 +1,215 @@
+================================================================================
+OCR 실제 구조 플로우 (단순 벤다이어그램이 아님)
+프로젝트: 알콩약콩
+작성일: 2026-09-01
+================================================================================
+
+질문: "우리 구조가 A→B→C 세 칸처럼 단순해?"
+답:   개념 요약은 그 세 덩어리로 말할 수 있지만,
+      구현·설계 문서에는 반드시 아래가 있어야 한다.
+
+        1) 앱이 무엇을 보내는가 (IN)
+        2) 서버가 무엇을 불러오는가 (CALL)
+        3) DB에 무엇을 쓰는가 (WRITE)
+        4) 앱이 무엇을 받아 어디에 보여주는가 (OUT)
+
+아래가 그 상세 구조이다.
+
+
+--------------------------------------------------------------------------------
+0. Mermaid (상세판) — 복사해서 다이어그램 툴에 붙여넣기
+--------------------------------------------------------------------------------
+
+flowchart TB
+    subgraph APP_IN["📱 앱 IN — PrescriptionScreen"]
+        UI1["capture: 사진 찍기 / 앨범"]
+        UI2["reading: 처방전 읽는 중"]
+        UI1 --> ENC["image → base64"]
+        ENC --> REQ["POST /api/v1/prescriptions/ocr\nbody: user_id, image_data, source_type"]
+        REQ --> UI2
+    end
+
+    subgraph API["🌐 FastAPI routes/prescription.py"]
+        R1["register_prescription_ocr()"]
+    end
+
+    subgraph SVC["⚙️ prescription_service.create_prescription_from_ocr"]
+        S0["_extract_items()"]
+    end
+
+    subgraph B_ENGINE["🤖 B1. OCR engine"]
+        E1["큰 사진이면 JPEG 축소"]
+        E2["Gemini Vision 호출"]
+        E3["OUT: raw_text"]
+        E1 --> E2 --> E3
+    end
+
+    subgraph B_PARSER["🤖 B2. OCR parser"]
+        P1["Gemini JSON schema 구조화"]
+        P2["filter_to_source\n원문에 없는 약/숫자 제거"]
+        P3["field_coverage % 계산"]
+        P4["OUT: structured items[]"]
+        P1 --> P2 --> P3 --> P4
+    end
+
+    subgraph B_RESOLVE["🔎 B3. 약 이름 확정"]
+        M1["name_matcher / retrieve_official"]
+        M2["CALL: mfds_drug_permission.db"]
+        M3["CALL: alkongyakong.db medicines"]
+        M4["CALL: e약은요 API optional"]
+        M5["실패 시 OCR-임시코드 UNMATCHED"]
+        M1 --> M2
+        M1 --> M3
+        M1 --> M4
+        M1 --> M5
+    end
+
+    subgraph C_DB["💾 C. SQLite WRITE"]
+        D1["INSERT users (없으면)"]
+        D2["INSERT prescriptions\n(+ ocr_text)"]
+        D3["INSERT/UPSERT medicines"]
+        D4["INSERT prescription_items"]
+        D5["INSERT user_medicines"]
+        D6["INSERT medication_schedules"]
+        D1 --> D2 --> D3 --> D4 --> D5 --> D6
+    end
+
+    subgraph APP_OUT["📱 앱 OUT"]
+        O1["JSON items[] 수신"]
+        O2["confirm: 이렇게 읽었어요"]
+        O3["실패 시 failed 화면"]
+        O4["등록하기 → 홈/DUR"]
+        O1 --> O2
+        O1 --> O3
+        O2 --> O4
+    end
+
+    REQ --> R1 --> S0
+    S0 --> E1
+    E3 --> P1
+    P4 --> M1
+    M5 --> D1
+    D6 --> RESP["응답 JSON\nprescription_id, items[], ocr_trace"]
+    RESP --> O1
+
+    CORE["★ 공통으로 끝까지 흘러가는 값\ndrug_name · frequency_per_day · duration_days"]
+    CORE -.-> P4
+    CORE -.-> D4
+    CORE -.-> O2
+
+
+--------------------------------------------------------------------------------
+1. 한 줄로 말하면 (개념)
+--------------------------------------------------------------------------------
+
+  앱 촬영 ──전달──▶ 인식·구조화 ──약정보──▶ DB등록·알람 ──응답──▶ 앱 확인화면
+
+  ※ 이건 "요약 제목"일 뿐, 설계서 본문은 아래 IN/CALL/OUT 표가 본체다.
+
+
+--------------------------------------------------------------------------------
+2. 앱이 보내는 것 (IN)
+--------------------------------------------------------------------------------
+
+화면: lib/.../prescription_screen.dart
+API : POST /api/v1/prescriptions/ocr
+
+필드                  의미
+--------------------  ----------------------------------
+user_id               누구 약함에 넣을지 (비면 mvp-user)
+image_data            처방전 사진 base64
+source_type           "OCR"
+
+
+--------------------------------------------------------------------------------
+3. 서버가 불러오는 것 (CALL) — 기능이 실제로 하는 일
+--------------------------------------------------------------------------------
+
+순서   모듈                         불러오는 것
+-----  ---------------------------  --------------------------------
+①      ocr/engine.py                Gemini Vision (사진→글자)
+②      ocr/parser.py                Gemini JSON 구조화
+                                    + filter_to_source(원문 검증)
+③      matching/name_matcher.py     로컬·후보 이름 유사도
+④      pharmacist/retrieve.py       mfds_drug_permission.db
+                                    alkongyakong.db medicines
+                                    e약은요 API
+⑤      easy_category (선택)         easy_category_map.db
+⑥      SQLite INSERT 다수           아래 4절
+
+
+--------------------------------------------------------------------------------
+4. DB에 나가는 것 (WRITE) — 쿼리 역할
+--------------------------------------------------------------------------------
+
+테이블 / 동작                      넣는 내용
+---------------------------------  --------------------------------
+users INSERT                       없는 user_id면 생성
+prescriptions INSERT               헤더 + ocr_text(raw 원문)
+medicines INSERT/UPSERT            공식코드 또는 OCR-임시코드
+prescription_items INSERT          약이름·용량·횟수·일수·해설
+user_medicines INSERT              내 약함
+medication_schedules INSERT        날짜·시각 알람 PENDING
+
+
+--------------------------------------------------------------------------------
+5. 앱이 받는 것 / 어디로 보여주는가 (OUT)
+--------------------------------------------------------------------------------
+
+응답 JSON 주요 필드
+  - prescription_id, ocr_status, ocr_text, ocr_trace
+  - items[]:
+      drug_name, medicine_code, match_status,
+      frequency_per_day, duration_days,
+      easy_explanation, uncertain, schedules
+
+앱 화면 분기
+  items 있음  → confirm "이렇게 읽었어요" 카드 목록
+  실패/빈값   → failed "지금은 읽지 못하고 있어요"
+  등록 버튼   → 세션 저장 + (위험 시) DUR 화면 / 아니면 pop
+
+
+--------------------------------------------------------------------------------
+6. ★ 공통 핵심이 왜 A·B·C에 다 걸리나
+--------------------------------------------------------------------------------
+
+  drug_name · frequency_per_day · duration_days 는
+
+    앱 IN(사진 속 글자)에서 시작해
+    → B에서 JSON으로 뽑히고
+    → C에서 prescription_items / schedules에 저장되고
+    → 다시 앱 OUT 카드·알람에 쓰인다.
+
+  그래서 "공통 핵심"을 동그라미로만 그리면 부족하고,
+  위처럼 IN → CALL → WRITE → OUT 화살표로 적어야 맞다.
+
+
+--------------------------------------------------------------------------------
+7. 잘못된 단순도와 올바른 문서화
+--------------------------------------------------------------------------------
+
+잘못된 단순화 (부족함)
+  A 촬영 → B Gemini → C SQLite → 끝
+  (무엇을 보내고, 무엇을 부르며, 화면에 뭐가 도는지가 없음)
+
+올바른 문서 최소 요건
+  [앱 IN 필드]
+  [서버 CALL 목록]
+  [DB WRITE 목록]
+  [앱 OUT 필드 + 화면]
+  [공통으로 흐르는 핵심 필드]
+
+
+--------------------------------------------------------------------------------
+8. 사용자에게 이 구조가 주는 것
+--------------------------------------------------------------------------------
+
+  사진 한 장(IN)으로
+  서버가 글자를 읽고 약을 찾아 저장·알람까지 만들고(CALL/WRITE)
+  "이렇게 읽었어요"로 확인받게 한다(OUT).
+
+  목적: 손 타이핑 없이 내 약 등록 + 복약 알림.
+
+================================================================================
+끝
+================================================================================

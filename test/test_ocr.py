@@ -5,7 +5,7 @@ import json
 # 현재 폴더 경로를 파이썬 경로에 추가하여 app 모듈을 불러올 수 있게 설정
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from app.services.gemini_service import parse_ocr_text_to_medicines
+from app.services.ocr.parser import parse_prescription_text
 
 # 1. 첨부해주신 처방전 이미지를 모방한 가상의 원시 OCR 텍스트
 # (구글 ML Kit나 Tesseract가 읽었다고 가정하는 지저분한 텍스트 덩어리)
@@ -36,7 +36,7 @@ def main():
     print("==================================================")
     
     # AI 서비스 호출
-    parsed_data = parse_ocr_text_to_medicines(SAMPLE_OCR_TEXT)
+    parsed_data = parse_prescription_text(SAMPLE_OCR_TEXT)
     
     if parsed_data is None:
         print("❌ 오류: GEMINI_API_KEY가 설정되지 않았습니다.")
@@ -49,7 +49,7 @@ def main():
     print(json.dumps(parsed_data, indent=4, ensure_ascii=False))
     
     print("\n🔍 백엔드 DB 저장 예상 시나리오:")
-    for item in parsed_data:
+    for item in parsed_data.get("items", []):
         print(f" -> '{item['drug_name']}' 검색 후 DB 매핑, 하루 {item['frequency_per_day']}번 x {item['duration_days']}일분 투약 스케줄 생성")
 
 if __name__ == "__main__":

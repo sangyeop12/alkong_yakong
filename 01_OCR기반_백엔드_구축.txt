@@ -1,0 +1,203 @@
+================================================================================
+문서 1. OCR 기반 백엔드 구축
+프로젝트: 알콩약콩 (alkong_yakong)
+작성일: 2026-09-01
+================================================================================
+
+
+--------------------------------------------------------------------------------
+0. 이 기능은 사용자를 위해 무엇을 하는가 (최종 목적)
+--------------------------------------------------------------------------------
+
+어르신·보호자가 처방전/복약안내문 사진을 찍으면,
+앱이 약 이름·하루 횟수·며칠분을 읽어 "내 약함"과 "복약 알람"까지
+자동으로 등록해 주는 기능이다.
+
+  사용자가 얻는 것
+  - 약 이름을 손으로 안 쳐도 됨
+  - "하루 몇 번 / 며칠" 알람이 바로 생김
+  - "이렇게 읽었어요"에서 확인 후 등록
+  - 나중에 AI 약사 채팅·함께먹기(DUR)의 출발점이 됨
+
+  한 줄: "종이 처방전 → 디지털 내 약 + 알람"
+
+
+--------------------------------------------------------------------------------
+1. 텍스트 벤다이어그램 (세 원이 겹치는 구조)
+--------------------------------------------------------------------------------
+
+  OCR 백엔드는 아래 세 영역이 겹쳐야 성립한다.
+
+            ┌──────────────┐
+            │  A. 촬영·전송 │
+            │  (앱 입력)    │
+            └──────┬───────┘
+                   │
+         ┌─────────┼─────────┐
+         │         │         │
+   ┌─────▼───┐ ┌───▼───┐ ┌───▼─────┐
+   │ B. 인식  │ │ ★공통 │ │ C. 등록  │
+   │ 글자·구조│ │ 영역  │ │ DB·알람  │
+   │ (Gemini) │ │       │ │ (SQLite) │
+   └─────┬───┘ └───┬───┘ └───┬─────┘
+         │         │         │
+         └─────────┼─────────┘
+                   │
+            ┌──────▼───────┐
+            │ 확인 화면 응답 │
+            │ (앱 출력)     │
+            └──────────────┘
+
+
+  [A] 촬영·전송 ──────── 사진 base64, user_id
+  [B] 인식·구조화 ────── raw_text → 약 JSON
+  [C] 등록·스케줄 ────── medicines / items / alarms
+
+  ★ 겹치는 핵심 (A∩B∩C)
+  - "믿을 수 있는 약 줄(drug_name + 횟수/일수)" 이
+    앱에서 들어와 → AI로 읽히고 → DB에 남아 → 다시 앱으로 나간다.
+
+
+  ASCII 벤다이어그램:
+
+              A 촬영·전송
+           _______________
+          /               \
+         /    사진 base64   \
+        |   user_id 전송     |
+         \        _________/__________
+          \      /   ★공통   \         \
+           \    / 약이름·횟수·일수 \  C 등록 \
+            \  /  확인카드 응답   \_______\
+             \/____________________\
+             /                      \
+            /   B 인식·구조화         \
+           |  engine→parser→filter    |
+            \  Gemini OCR            /
+             \______________________/
+
+
+--------------------------------------------------------------------------------
+2. 어디서 들어오고 어디로 나가는가 (입·출력)
+--------------------------------------------------------------------------------
+
+[IN — 들어옴]
+  위치: Flutter 처방전 찍기 화면
+        → POST /api/v1/prescriptions/ocr
+  내용:
+    - user_id
+    - image_data (base64 사진)  또는  ocr_text (테스트용 원문)
+    - source_type = "OCR"
+
+[처리 — 백엔드 내부]
+  ① engine   (app/services/ocr/engine.py)
+       사진 bytes → raw_text (글자 원문)
+       큰 사진은 JPEG로 축소 후 Gemini Vision 호출
+
+  ② parser   (app/services/ocr/parser.py)
+       raw_text → structured JSON
+       (hospital_name, pharmacy_name, prescribed_date, items[])
+       + filter_to_source (원문에 없는 값 제거)
+       + field_coverage (필드 채움 %)
+
+  ③ resolve  (prescription_service._resolve_medicine)
+       drug_name → medicine_code
+       허가DB / 로컬 medicines / e약은요
+       실패 시 OCR-임시코드(UNMATCHED)로라도 확인 화면까지 진행
+
+  ④ persist  (SQLite INSERT)
+       처방전 헤더 + 약 줄 + 내 약함 + 알람
+
+[OUT — 나감]
+  JSON 응답 → 앱 "이렇게 읽었어요"
+    - prescription_id, ocr_status, ocr_text, ocr_trace
+    - items[]: drug_name, medicine_code, match_status,
+               frequency_per_day, duration_days,
+               easy_explanation, uncertain, schedules
+
+
+--------------------------------------------------------------------------------
+3. DB는 어떤 쿼리로 무엇을 호출하는가
+--------------------------------------------------------------------------------
+
+사용 DB
+  - alkongyakong.db          (메인)
+  - mfds_drug_permission.db  (식약처 허가정보 미러, 매칭용)
+  - (참고) easy_category_map.db — OCR 직후 쉬운분류 부여 시
+
+주요 SQL / 호출
+
+  (1) 사용자 확인·생성
+      SELECT id FROM users WHERE id = ?
+      INSERT INTO users (id, name, role) VALUES (?, ?, ?)
+
+  (2) 처방전 헤더
+      INSERT INTO prescriptions (
+        id, user_id, source_type, hospital_name, pharmacy_name,
+        prescribed_date, expire_date, original_image_path, ocr_text
+      ) VALUES (...)
+
+  (3) 약품 매칭·업서트
+      SELECT * FROM medicines WHERE medicine_code = ?
+      SELECT * FROM medicines WHERE product_name IS NOT NULL
+      → name_matcher / retrieve_official
+         · mfds_drug_permission.db 제품명 검색
+         · e약은요 API (필요 시)
+      INSERT INTO medicines (...)           -- 공식 또는 OCR 임시
+      ON CONFLICT(medicine_code) DO UPDATE  -- 공식 업서트 시
+
+  (4) 처방 약 줄
+      INSERT INTO prescription_items (
+        prescription_id, medicine_code, ocr_drug_name, dosage, unit,
+        frequency_per_day, times_per_take, duration_days,
+        administration_times, match_status, easy_explanation, warning_note
+      ) VALUES (...)
+
+  (5) 내 약함
+      INSERT INTO user_medicines (
+        user_id, medicine_code, prescription_item_id, start_date,
+        end_date, dosage, frequency_per_day, administration_times
+      ) VALUES (...)
+
+  (6) 복약 알람
+      INSERT OR IGNORE INTO medication_schedules (
+        user_id, user_medicine_id, scheduled_date,
+        scheduled_time, time_slot, status
+      ) VALUES (?, ?, ?, ?, ?, 'PENDING')
+
+  (7) 조회 (목록)
+      SELECT * FROM prescriptions WHERE user_id = ? ORDER BY created_at DESC
+      SELECT pi.*, m.product_name, m.ingredient
+        FROM prescription_items pi
+        LEFT JOIN medicines m ON m.medicine_code = pi.medicine_code
+       WHERE pi.prescription_id = ?
+
+
+--------------------------------------------------------------------------------
+4. 구축 구성요소 체크리스트
+--------------------------------------------------------------------------------
+
+  [x] API 입구          routes/prescription.py
+  [x] 서비스 오케스트레이션 prescription_service.py
+  [x] OCR 엔진          ocr/engine.py  (Gemini Vision)
+  [x] OCR 구조화        ocr/parser.py  (JSON schema + 필터)
+  [x] 파이프라인        ocr/pipeline.py
+  [x] 이름 매칭         matching/name_matcher.py
+  [x] 공식자료 검색     pharmacist/retrieve.py
+  [x] DB 스키마         prescriptions / prescription_items /
+                        user_medicines / medication_schedules / medicines
+  [x] 앱 연동           PrescriptionScreen (capture→reading→confirm)
+
+
+--------------------------------------------------------------------------------
+5. 요약
+--------------------------------------------------------------------------------
+
+OCR 백엔드 = (사진 입력) ∩ (글자·구조화) ∩ (DB 등록·알람)
+
+최종적으로 사용자에게:
+  "종이 처방전을 찍기만 하면, 내 약이 등록되고 먹을 시간에 알려준다."
+
+================================================================================
+끝 — 문서 1
+================================================================================

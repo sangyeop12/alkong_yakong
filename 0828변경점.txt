@@ -1,0 +1,190 @@
+알콩약콩 0828 변경점
+
+작성일: 2026-08-28
+대상: woong2 워킹트리 (마지막 커밋 0344ff1 이후, 아직 커밋 안 함)
+범위: 진행도.txt 미완료 항목 + 그 앞에서 이어서 붙인 OCR/챗봇 연결
+제외: 실사진 OCR 품질 실험(보류), 커밋/푸시
+
+
+============================================================
+1. 한 줄
+============================================================
+
+OCR은 식약처까지 연결하고, 파서가 원문에 없는 약을 버리며,
+챗봇·약 카드는 generate+guard를 타고, 짧은 문장을 자동 검사한다.
+옛 Gemini 원샷 OCR 함수는 지웠다.
+
+
+============================================================
+2. 새로 만든 파일
+============================================================
+
+  test/fixtures/prescription_raw.txt
+      실제 처방전 원문 fixture.
+      모사피아정, 프로맥정, 니자액스캡슐150mg. 일수는 5일분.
+
+  test/test_parser_fixture.py
+      원문에 없는 약(타이레놀정)과 없는 일수(14일)를 버리는지 검사.
+
+  test/test_official_name_typos.py
+      공식 제품명(타이레놀정500밀리그램, 부루펜정200밀리그램(이부프로펜),
+      게보린정)으로 띄어쓰기·짧은 이름 매칭.
+      타이래놀은 0.90 미만이라 자동 확정하지 않음.
+      로컬 medicines 테이블에 이름이 있으면 그것도 같은 방식으로 검사.
+
+  test/test_generate_easy.py
+      문장 3개 제한, 80자 초과 실패.
+      카드 guard: 원문과 겹치는 칸만 남기고, 발명 문장은 카드 자체를 안 냄.
+
+  test/test_name_matcher.py
+      exact / 타이래놀 미확정 / 빈 이름.
+
+  test/test_ocr_pipeline_fail.py
+      빈 이미지, 빈 원문, 파서 빈 텍스트 실패 경로.
+
+
+============================================================
+3. 수정한 파일
+============================================================
+
+app/services/ocr/parser.py
+  - parse 후 filter_to_source 적용.
+  - 원문 compact 문자열에 없는 약 이름은 삭제.
+  - 횟수는 "N회/N번", 일수는 "N일", 1회량은 "N정/N캡슐/N개"가
+    원문에 있을 때만 남김. 날짜 숫자(20260417)를 횟수로 쓰지 않음.
+
+app/services/ocr/engine.py
+  - PNG/JPEG/GIF/WEBP MIME 구분. 예전에는 전부 image/jpeg.
+  - timeout → 504, auth_error → 502, unavailable 구분.
+
+app/services/matching/name_matcher.py
+  - 괄호 안 성분명 제거, 밀리그램/밀리그람/mg 제거 후 비교.
+  - 예: 부루펜정200밀리그램 ↔ 부루펜정200밀리그램(이부프로펜)
+
+app/services/pharmacist/generate.py
+  - validate_easy_output: 문장 3개까지, 한 문장 80자 초과면 실패.
+  - generate_from_source가 위 검사를 통과한 뒤에만 답을 냄.
+  - generate_card_from_source: 약 카드 JSON 생성.
+  - apply_card_guard: 카드 각 칸을 guard. 근거 없으면 카드 None.
+
+app/services/drug_explain_service.py
+  - generate_easy_explanation(gemini_service) 대신
+    generate_card_from_source 호출.
+  - 생성 실패·guard 실패면 공식 원문 fallback.
+  - source_based=false 카드는 응답하지 않음. (기존 유지)
+
+app/services/gemini_service.py
+  - analyze_prescription_image, OCR_SCHEMA, CHAT_EXTRACTION_SCHEMA 삭제.
+  - generate_easy_explanation은 generate_card_from_source 호환 래퍼만 남김.
+  - 운영 OCR은 engine/parser, 카드는 pharmacist/generate.
+
+app/services/prescription_service.py
+  - 로컬 미스 후 retrieve_official(식약처) 호출. 히트 시 medicines upsert.
+  - 식약처에도 없으면 422. MOCK 코드 생성 없음.
+  - warning_note INSERT.
+  - 응답에 ocr_trace.
+  - OCR 실패를 상태코드로 나눔 (503 키없음, 504 timeout, 502 엔진, 422 파서).
+
+app/models/schemas.py
+  - OCRMedicineItem에 warning_note 필드.
+
+simple_test_server.py
+  - 옛 analyze_prescription_image 호출 삭제.
+  - app.services.ocr.pipeline.run_ocr_pipeline 사용.
+
+lib/features/drug_explain/drug_explain_screen.dart
+  - 타이레놀 데모 답, _safeDemoReply 삭제.
+  - FAQ 칩이 입력창에 문구만 넣지 않고 선택 약과 조합(_selectSuggestion).
+  - API 실패 안내를 404/422, 502/504, 503으로 나눔.
+
+test/test_features.py
+  - mock 대상을 generate_card_from_source로 변경.
+
+
+============================================================
+4. 삭제한 것
+============================================================
+
+  - gemini_service.analyze_prescription_image
+  - gemini_service.OCR_SCHEMA
+  - gemini_service.CHAT_EXTRACTION_SCHEMA
+  - 챗봇 화면 타이레놀 고정 데모 답
+  - 임시 테스트 서버의 원샷 Gemini OCR 복제 코드
+
+  운영 경로에서 부르던 코드가 아니라 남아 있던 옛 입구를 정리한 것.
+
+
+============================================================
+5. 동작이 바뀐 점
+============================================================
+
+OCR
+  사진 → engine(raw_text) → parser(JSON, 원문 필터) → matcher
+       → 로컬 없으면 식약처 retrieve → 있으면 DB 등록, 없으면 422.
+  식약처에 없는 상품명(예: 프리마란)은 등록되지 않는다. 의도된 동작.
+
+챗봇
+  기존 chat_pipeline(spell → matcher → retrieve → generate → guard) 유지.
+  generate가 짧은 문장 검사를 추가함.
+  화면에서 데모 답으로 덮지 않음.
+
+약 카드 GET /drug-explain/{code}
+  예전: gemini_service.generate_easy_explanation
+  지금: generate_card_from_source → apply_card_guard
+  근거 없는 칸은 "공식 정보에 명시되어 있지 않습니다."
+  내용 칸이 전부 거절되면 카드 생성을 포기하고 공식 원문 fallback.
+
+
+============================================================
+6. 테스트
+============================================================
+
+아래 23개 통과 (pytest, Gemini 호출 없음).
+
+  test/test_parser_fixture.py
+  test/test_official_name_typos.py
+  test/test_generate_easy.py
+  test/test_name_matcher.py
+  test/test_ocr_pipeline_fail.py
+
+실사진 Vision 품질 테스트는 보류. 이번 범위 아님.
+
+
+============================================================
+7. 아직 안 한 것
+============================================================
+
+  [보류] 실제 처방전 사진 raw_text 품질 측정
+  [보류] 안 읽히는 사진 실험
+  [보류] 실제 Gemini Vision 통합 테스트
+  로컬 medicines 공식약이 거의 비어 있음. OCR 확정은 식약처 검색에 의존.
+  이 문서는 작성만 함. 커밋·푸시는 하지 않음.
+
+
+============================================================
+8. 올릴 때 파일 목록 (워킹트리)
+============================================================
+
+수정
+  app/models/schemas.py
+  app/services/drug_explain_service.py
+  app/services/gemini_service.py
+  app/services/matching/name_matcher.py
+  app/services/ocr/engine.py
+  app/services/ocr/parser.py
+  app/services/pharmacist/generate.py
+  app/services/prescription_service.py
+  lib/features/drug_explain/drug_explain_screen.dart
+  simple_test_server.py
+  test/test_features.py
+
+신규
+  0828변경점.txt
+  test/fixtures/prescription_raw.txt
+  test/test_generate_easy.py
+  test/test_name_matcher.py
+  test/test_ocr_pipeline_fail.py
+  test/test_official_name_typos.py
+  test/test_parser_fixture.py
+
+끝.

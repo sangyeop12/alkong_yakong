@@ -1,13 +1,12 @@
 import http.server
 import socketserver
 import cgi
-import base64
 import json
 import sys
 import os
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from app.services.gemini_service import analyze_prescription_image
+from app.services.ocr.pipeline import run_ocr_pipeline
 
 PORT = 8081
 
@@ -72,41 +71,18 @@ class OCRTestHandler(http.server.SimpleHTTPRequestHandler):
             base64_str = base64.b64encode(file_data).decode("utf-8")
             
             try:
-                from app.core.config import GEMINI_API_KEY, GEMINI_MODEL
-                from app.services.gemini_service import OCR_SCHEMA
-                from google import genai
-                from google.genai import types
-
-                if not GEMINI_API_KEY:
-                    json_str = "오류: GEMINI_API_KEY가 설정되지 않았습니다."
-                else:
-                    image_bytes = file_data
-                    part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
-
-                    prompt = (
-                        "이 사진은 한국의 병원 처방전 또는 약국 복약안내문입니다. "
-                        "이미지에서 약품명, 1회 투약량(dosage), 1일 투여 횟수(frequency_per_day), "
-                        "총 투약 일수(duration_days)를 정확하게 추출해주세요. "
-                        "정보가 보이지 않는다면 유추하지 말고 빈 문자열이나 null로 두세요."
-                    )
-
-                    with genai.Client(api_key=GEMINI_API_KEY) as client:
-                        response = client.models.generate_content(
-                            model=GEMINI_MODEL,
-                            contents=[part, prompt],
-                            config={
-                                "temperature": 0.0,
-                                "response_mime_type": "application/json",
-                                "response_json_schema": OCR_SCHEMA,
-                            },
-                        )
-                        
-                    parsed = response.parsed
-                    if parsed is None and response.text:
-                        parsed = json.loads(response.text)
-                    
-                    json_str = json.dumps(parsed, ensure_ascii=False, indent=4)
-
+                result = run_ocr_pipeline(file_data)
+                json_str = json.dumps(
+                    {
+                        "ok": result.ok,
+                        "raw_text": result.raw_text,
+                        "structured": result.structured,
+                        "error": result.error,
+                        "trace": result.trace,
+                    },
+                    ensure_ascii=False,
+                    indent=4,
+                )
             except Exception as e:
                 import traceback
                 json_str = f"분석 중 상세 오류 발생:\\n{traceback.format_exc()}"

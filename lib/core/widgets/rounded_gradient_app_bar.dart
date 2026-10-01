@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import '../constants/app_colors.dart';
+import '../theme/app_typography.dart';
 
-/// 앱 전체 공용 상단바.
+/// 아직 리디자인이 닿지 않은 화면이 쓰는 상단바.
+///
+/// 그라디언트는 폐기했다 — 배경은 [AppColors.headerBg], 아래 1px 경계선,
+/// 글자는 검정이다. 새 화면은 `SeniorHeader`/`SeniorTitleHeader`를 쓸 것.
+/// 원래 주석:
 /// 핵심: 안쪽 콘텐츠를 [_contentHeight] 로 고정해서, 로고/아이콘이 있든
 /// 제목만 있든 **모든 화면에서 높이가 100% 동일**하게 만든다.
 /// (Scaffold 는 커스텀 상단바를 내용물 크기에 맞춰 그리기 때문에,
@@ -33,12 +38,9 @@ class RoundedGradientAppBar extends StatelessWidget
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(32),
-          bottomRight: Radius.circular(32),
-        ),
+      decoration: const BoxDecoration(
+        color: AppColors.headerBg,
+        border: Border(bottom: BorderSide(color: AppColors.border, width: 1)),
       ),
       child: SafeArea(
         bottom: false,
@@ -50,15 +52,9 @@ class RoundedGradientAppBar extends StatelessWidget
             child: Row(
               children: [
                 if (leading != null) ...[leading!, const SizedBox(width: 10)],
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                  ),
+                Expanded(
+                  child: Text(title, style: AppText.screenTitle(size: 24)),
                 ),
-                const Spacer(),
                 ...actions,
               ],
             ),
