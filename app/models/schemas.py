@@ -147,6 +147,7 @@ class PrescriptionConfirmRequest(BaseModel):
 class DurAnalyzeRequest(BaseModel):
     user_id: str
     medicine_codes: List[str] = Field(default_factory=list)
+    medicine_names_by_code: dict[str, str] = Field(default_factory=dict)
     is_pregnant: Optional[bool] = None
 
 

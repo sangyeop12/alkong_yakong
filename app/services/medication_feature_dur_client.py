@@ -176,7 +176,11 @@ def load_remote_combination_context(
         requested_codes = list(names_by_code)
         dur_response = requests.post(
             f"{MEDICATION_FEATURE_BASE_URL}/api/v1/dur/analyze",
-            json={"user_id": uid, "medicine_codes": requested_codes},
+            json={
+                "user_id": uid,
+                "medicine_codes": requested_codes,
+                "medicine_names_by_code": names_by_code,
+            },
             timeout=MEDICATION_FEATURE_TIMEOUT_SECONDS,
         )
         dur_response.raise_for_status()

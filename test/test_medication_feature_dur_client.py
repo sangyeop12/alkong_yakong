@@ -69,7 +69,11 @@ class MedicationFeatureDurClientTest(unittest.TestCase):
         self.assertIn("/api/v1/users/user-1/medicines", get.call_args.args[0])
         self.assertEqual(
             post.call_args.kwargs["json"],
-            {"user_id": "user-1", "medicine_codes": ["100"]},
+            {
+                "user_id": "user-1",
+                "medicine_codes": ["100"],
+                "medicine_names_by_code": {"100": "등록약정"},
+            },
         )
 
     def test_completed_zero_result_is_current_not_incomplete(self):
@@ -325,7 +329,14 @@ class MedicationFeatureDurClientTest(unittest.TestCase):
         post.assert_called_once()
         self.assertEqual(
             post.call_args.kwargs["json"],
-            {"user_id": "user-1", "medicine_codes": ["100", "200"]},
+            {
+                "user_id": "user-1",
+                "medicine_codes": ["100", "200"],
+                "medicine_names_by_code": {
+                    "100": "OCR등록약정",
+                    "200": "손입력약정",
+                },
+            },
         )
 
     def test_explicit_only_scope_skips_registered_medicine_lookup(self):
@@ -363,7 +374,14 @@ class MedicationFeatureDurClientTest(unittest.TestCase):
         self.assertFalse(result["has_risk"])
         self.assertEqual(
             post.call_args.kwargs["json"],
-            {"user_id": "user-1", "medicine_codes": ["101", "202"]},
+            {
+                "user_id": "user-1",
+                "medicine_codes": ["101", "202"],
+                "medicine_names_by_code": {
+                    "101": "첫째약정",
+                    "202": "둘째약정",
+                },
+            },
         )
 
     def test_explicit_ai_scope_runs_live_reference_lookup(self):
@@ -417,7 +435,14 @@ class MedicationFeatureDurClientTest(unittest.TestCase):
         self.assertEqual(result["status"], "current")
         self.assertEqual(
             post.call_args.kwargs["json"],
-            {"user_id": "user-1", "medicine_codes": ["100", "200"]},
+            {
+                "user_id": "user-1",
+                "medicine_codes": ["100", "200"],
+                "medicine_names_by_code": {
+                    "100": "등록약정",
+                    "200": "화면임시약정",
+                },
+            },
         )
 
     def test_missing_temporary_medicine_from_dur_scope_is_incomplete(self):

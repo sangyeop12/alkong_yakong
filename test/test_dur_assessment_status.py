@@ -253,6 +253,103 @@ def test_explicit_official_code_is_cached_without_user_registration(
         conn.close()
 
 
+def test_explicit_official_name_is_used_for_exact_permission_lookup(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "dur.sqlite3"
+    _prepare_db(db_path)
+    monkeypatch.setattr(dur_service, "get_connection", lambda: _open_db(db_path))
+    monkeypatch.setattr(
+        permission_db,
+        "find_permission_product_by_item_seq",
+        lambda _code: None,
+    )
+    permission_calls = []
+
+    def fetch_permission_detail(**kwargs):
+        permission_calls.append(kwargs)
+        return {
+            "ITEM_SEQ": "MED-2",
+            "ITEM_NAME": "검색약정",
+            "MAIN_ITEM_INGR": "검색약성분",
+        }
+
+    monkeypatch.setattr(
+        permission_client,
+        "fetch_permission_detail",
+        fetch_permission_detail,
+    )
+    monkeypatch.setattr(
+        external_api_service,
+        "fetch_e_drug_info",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        dur_sync_service,
+        "refresh_dur_for_ingredients",
+        lambda _names: {"status": "ok", "fetched": 0, "upserted": 0},
+    )
+
+    result = dur_service.analyze_dur(
+        DurAnalyzeRequest(
+            user_id="patient-1",
+            medicine_codes=["MED-1", "MED-2"],
+            medicine_names_by_code={
+                "MED-1": "테스트정",
+                "MED-2": "검색약정",
+            },
+        ),
+        persist=False,
+        refresh=True,
+    )
+
+    assert permission_calls == [
+        {"item_name": "검색약정", "item_seq": "MED-2"}
+    ]
+    assert result["medicine_names"] == ["테스트정", "검색약정"]
+    assert result["assessment_status"] == "SAFE"
+    assert result["analysis_complete"] is True
+    assert result["by_type"]["중복성분"]["count"] == 0
+
+
+def test_explicit_official_name_mismatch_is_not_cached(tmp_path, monkeypatch):
+    db_path = tmp_path / "dur.sqlite3"
+    _prepare_db(db_path)
+    monkeypatch.setattr(dur_service, "get_connection", lambda: _open_db(db_path))
+    monkeypatch.setattr(
+        permission_db,
+        "find_permission_product_by_item_seq",
+        lambda _code: None,
+    )
+    monkeypatch.setattr(
+        permission_client,
+        "fetch_permission_detail",
+        lambda **_kwargs: {
+            "ITEM_SEQ": "MED-2",
+            "ITEM_NAME": "다른약정",
+            "MAIN_ITEM_INGR": "다른성분",
+        },
+    )
+    monkeypatch.setattr(
+        external_api_service,
+        "fetch_e_drug_info",
+        lambda **_kwargs: None,
+    )
+
+    result = dur_service.analyze_dur(
+        DurAnalyzeRequest(
+            user_id="patient-1",
+            medicine_codes=["MED-2"],
+            medicine_names_by_code={"MED-2": "검색약정"},
+        ),
+        persist=False,
+        refresh=False,
+    )
+
+    assert result["assessment_status"] == "INCOMPLETE"
+    assert result["medicine_names"] == []
+
+
 def test_unverified_explicit_code_is_not_cached(tmp_path, monkeypatch):
     db_path = tmp_path / "dur.sqlite3"
     _prepare_db(db_path)

@@ -33,6 +33,10 @@ OFFICIAL_DUR_TYPES = {"병용금기", "연령금기", "임부금기", "효능군
 ALL_CHECK_TYPES = OFFICIAL_DUR_TYPES | {"중복성분"}
 
 
+def _compact_product_name(value: object) -> str:
+    return "".join(str(value or "").split()).casefold()
+
+
 def _official_reason(value: str | None, fallback: str) -> str:
     return display_efficacy_text(value) or (value or "").strip() or fallback
 
@@ -99,7 +103,10 @@ def analyze_dur(
     refresh: bool | None = None,
 ) -> dict:
     if request.medicine_codes:
-        _cache_missing_official_medicines(request.medicine_codes)
+        _cache_missing_official_medicines(
+            request.medicine_codes,
+            medicine_names_by_code=request.medicine_names_by_code,
+        )
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -331,7 +338,11 @@ def analyze_dur(
         conn.close()
 
 
-def _cache_missing_official_medicines(medicine_codes: list[str]) -> None:
+def _cache_missing_official_medicines(
+    medicine_codes: list[str],
+    *,
+    medicine_names_by_code: dict[str, str] | None = None,
+) -> None:
     """Cache verified catalog rows without registering them to a user."""
 
     codes = list(
@@ -366,10 +377,18 @@ def _cache_missing_official_medicines(medicine_codes: list[str]) -> None:
         product_to_medicine,
     )
 
+    expected_names = {
+        str(code or "").strip(): str(name or "").strip()
+        for code, name in (medicine_names_by_code or {}).items()
+        if str(code or "").strip() and str(name or "").strip()
+    }
+
     for code in codes:
         if code in existing_codes:
             continue
         try:
+            expected_name = expected_names.get(code)
+
             def verified(candidate) -> bool:
                 if not isinstance(candidate, dict):
                     return False
@@ -382,6 +401,11 @@ def _cache_missing_official_medicines(medicine_codes: list[str]) -> None:
                 return bool(
                     official_code == code
                     and official_name
+                    and (
+                        not expected_name
+                        or _compact_product_name(official_name)
+                        == _compact_product_name(expected_name)
+                    )
                     and is_usable_ingredient(
                         candidate.get("ingredient"),
                         official_name,
@@ -392,7 +416,14 @@ def _cache_missing_official_medicines(medicine_codes: list[str]) -> None:
             medicine = product_to_medicine(permission_row) if permission_row else None
             if not verified(medicine):
                 try:
-                    detail = fetch_permission_detail(item_seq=code)
+                    # The permission API is more reliable for some products
+                    # when queried by the already-verified official name. The
+                    # returned row is still accepted only when both its code
+                    # and name exactly match this request.
+                    detail = fetch_permission_detail(
+                        item_name=expected_name,
+                        item_seq=code,
+                    )
                 except Exception:
                     detail = None
                 if isinstance(detail, dict):
@@ -413,7 +444,10 @@ def _cache_missing_official_medicines(medicine_codes: list[str]) -> None:
                         }
                     )
             if not verified(medicine):
-                medicine = fetch_e_drug_info(medicine_code=code)
+                medicine = fetch_e_drug_info(
+                    medicine_code=code,
+                    medicine_name=expected_name,
+                )
             if not verified(medicine):
                 continue
             _upsert_dur_catalog_medicine(medicine)
